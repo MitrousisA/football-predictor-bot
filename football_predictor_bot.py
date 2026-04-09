@@ -33,7 +33,7 @@ LEAGUE_IDS = {
 # ─── API CALLS ───────────────────────────────────────────────────────────────
 
 def get_fixtures_today():
-    today = date.today().isoformat()
+    today = "2026-04-08"
     all_fixtures = []
     for league_id, league_name in LEAGUE_IDS.items():
         resp = requests.get(
