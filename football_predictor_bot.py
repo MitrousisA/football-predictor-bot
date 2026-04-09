@@ -39,7 +39,7 @@ def get_fixtures_today():
         resp = requests.get(
             f"{BASE_URL}/fixtures",
             headers=HEADERS,
-            params={"league": league_id, "date": today, "season": "2025"},
+            params={"league": league_id, "date": today, "season": "2024"},
             timeout=10
         )
         print(f"  League {league_name}: status={resp.status_code}, results={len(resp.json().get('response', []))}")
