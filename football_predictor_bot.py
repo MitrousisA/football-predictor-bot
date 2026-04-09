@@ -39,7 +39,7 @@ def get_fixtures_today():
         resp = requests.get(
             f"{BASE_URL}/fixtures",
             headers=HEADERS,
-            params={"league": league_id, "date": today, "season": "2025"}
+            params={"league": league_id, "date": today, "season": "2025"},
             timeout=10
         )
         print(f"  League {league_name}: status={resp.status_code}, results={len(resp.json().get('response', []))}")
@@ -62,7 +62,7 @@ def get_team_form(team_id):
     resp = requests.get(
         f"{BASE_URL}/fixtures",
         headers=HEADERS,
-        params={"team": team_id, "last": 5}
+        params={"team": team_id, "last": 5},
         timeout=10
     )
     if resp.status_code != 200:
@@ -85,7 +85,7 @@ def get_h2h(home_id, away_id):
     resp = requests.get(
         f"{BASE_URL}/fixtures/headtohead",
         headers=HEADERS,
-        params={"h2h": f"{home_id}-{away_id}", "last": 5}
+        params={"h2h": f"{home_id}-{away_id}", "last": 5},
         timeout=10
     )
     if resp.status_code != 200:
@@ -105,7 +105,7 @@ def get_team_stats(team_id, league_id):
     resp = requests.get(
         f"{BASE_URL}/teams/statistics",
         headers=HEADERS,
-        params={"team": team_id, "league": league_id, "season": "2025"}
+        params={"team": team_id, "league": league_id, "season": "2025"},
         timeout=10
     )
     if resp.status_code != 200:
