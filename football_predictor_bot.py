@@ -40,6 +40,7 @@ def get_fixtures_today():
             f"{BASE_URL}/fixtures",
             headers=HEADERS,
             params={"league": league_id, "date": today, "season": "2025"}
+            timeout=10
         )
         print(f"  League {league_name}: status={resp.status_code}, results={len(resp.json().get('response', []))}")
         if resp.status_code != 200:
@@ -62,6 +63,7 @@ def get_team_form(team_id):
         f"{BASE_URL}/fixtures",
         headers=HEADERS,
         params={"team": team_id, "last": 5}
+        timeout=10
     )
     if resp.status_code != 200:
         return "N/A"
@@ -84,6 +86,7 @@ def get_h2h(home_id, away_id):
         f"{BASE_URL}/fixtures/headtohead",
         headers=HEADERS,
         params={"h2h": f"{home_id}-{away_id}", "last": 5}
+        timeout=10
     )
     if resp.status_code != 200:
         return "N/A"
@@ -103,6 +106,7 @@ def get_team_stats(team_id, league_id):
         f"{BASE_URL}/teams/statistics",
         headers=HEADERS,
         params={"team": team_id, "league": league_id, "season": "2025"}
+        timeout=10
     )
     if resp.status_code != 200:
         return {}
