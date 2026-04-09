@@ -33,7 +33,7 @@ COMPETITIONS = {
 
 def get_fixtures_today():
     """Παίρνει όλα τα παιχνίδια της σημερινής ημέρας."""
-    today = date.today().isoformat()
+    today = "2026-04-05"
     print(f"🔍 Ψάχνω παιχνίδια για: {today}")
     all_fixtures = []
 
