@@ -39,7 +39,7 @@ def get_fixtures_today():
         resp = requests.get(
             f"{BASE_URL}/fixtures",
             headers=HEADERS,
-            params={"league": league_id, "date": today, "season": "2024"}
+            params={"league": league_id, "date": today, "season": "2025"}
         )
         if resp.status_code != 200:
             continue
@@ -102,7 +102,7 @@ def get_team_stats(team_id, league_id):
     resp = requests.get(
         f"{BASE_URL}/teams/statistics",
         headers=HEADERS,
-        params={"team": team_id, "league": league_id, "season": "2024"}
+        params={"team": team_id, "league": league_id, "season": "2025"}
     )
     if resp.status_code != 200:
         return {}
