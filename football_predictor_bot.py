@@ -1,5 +1,5 @@
 """
-⚽ Football Prediction Telegram Bot - v2 (Πραγματικά Δεδομένα)
+⚽ Football Prediction Telegram Bot - v3 (api-sports.io direct)
 ===============================================================
 """
 
@@ -12,12 +12,12 @@ from datetime import date
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID   = os.environ["TELEGRAM_CHAT_ID"]
-RAPIDAPI_KEY       = os.environ["RAPIDAPI_KEY"]
+API_FOOTBALL_KEY   = os.environ["RAPIDAPI_KEY"]
 ANTHROPIC_API_KEY  = os.environ["ANTHROPIC_API_KEY"]
 
-HEADERS = {
-    "X-RapidAPI-Key":  RAPIDAPI_KEY,
-    "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+BASE_URL = "https://v3.football.api-sports.io"
+HEADERS  = {
+    "x-apisports-key": API_FOOTBALL_KEY
 }
 
 LEAGUE_IDS = {
@@ -33,12 +33,11 @@ LEAGUE_IDS = {
 # ─── API CALLS ───────────────────────────────────────────────────────────────
 
 def get_fixtures_today():
-    """Παίρνει όλα τα παιχνίδια της σημερινής ημέρας."""
     today = date.today().isoformat()
     all_fixtures = []
     for league_id, league_name in LEAGUE_IDS.items():
         resp = requests.get(
-            "https://api-football-v1.p.rapidapi.com/v3/fixtures",
+            f"{BASE_URL}/fixtures",
             headers=HEADERS,
             params={"league": league_id, "date": today, "season": "2024"}
         )
@@ -46,23 +45,23 @@ def get_fixtures_today():
             continue
         for f in resp.json().get("response", []):
             all_fixtures.append({
-                "league":      league_name,
-                "fixture_id":  f["fixture"]["id"],
-                "home":        f["teams"]["home"]["name"],
-                "away":        f["teams"]["away"]["name"],
-                "home_id":     f["teams"]["home"]["id"],
-                "away_id":     f["teams"]["away"]["id"],
-                "time":        f["fixture"]["date"][11:16],
+                "league":     league_name,
+                "fixture_id": f["fixture"]["id"],
+                "home":       f["teams"]["home"]["name"],
+                "away":       f["teams"]["away"]["name"],
+                "home_id":    f["teams"]["home"]["id"],
+                "away_id":    f["teams"]["away"]["id"],
+                "time":       f["fixture"]["date"][11:16],
+                "league_id":  league_id,
             })
     return all_fixtures
 
 
-def get_team_form(team_id, season="2024"):
-    """Παίρνει τα τελευταία 5 αποτελέσματα μιας ομάδας (W/D/L)."""
+def get_team_form(team_id):
     resp = requests.get(
-        "https://api-football-v1.p.rapidapi.com/v3/fixtures",
+        f"{BASE_URL}/fixtures",
         headers=HEADERS,
-        params={"team": team_id, "last": 5, "season": season}
+        params={"team": team_id, "last": 5}
     )
     if resp.status_code != 200:
         return "N/A"
@@ -81,9 +80,8 @@ def get_team_form(team_id, season="2024"):
 
 
 def get_h2h(home_id, away_id):
-    """Παίρνει τα τελευταία 5 H2H αποτελέσματα."""
     resp = requests.get(
-        "https://api-football-v1.p.rapidapi.com/v3/fixtures/headtohead",
+        f"{BASE_URL}/fixtures/headtohead",
         headers=HEADERS,
         params={"h2h": f"{home_id}-{away_id}", "last": 5}
     )
@@ -100,12 +98,11 @@ def get_h2h(home_id, away_id):
     return " | ".join(results) if results else "N/A"
 
 
-def get_team_stats(team_id, league_id, season="2024"):
-    """Παίρνει γκολ scored/conceded μέσος όρος."""
+def get_team_stats(team_id, league_id):
     resp = requests.get(
-        "https://api-football-v1.p.rapidapi.com/v3/teams/statistics",
+        f"{BASE_URL}/teams/statistics",
         headers=HEADERS,
-        params={"team": team_id, "league": league_id, "season": season}
+        params={"team": team_id, "league": league_id, "season": "2024"}
     )
     if resp.status_code != 200:
         return {}
@@ -186,15 +183,14 @@ def main():
 
     enriched = []
     for f in fixtures:
-        league_id = next((k for k, v in LEAGUE_IDS.items() if v == f["league"]), 39)
         print(f"  📊 {f['home']} vs {f['away']}...")
         enriched.append({
             **f,
             "home_form":  get_team_form(f["home_id"]),
             "away_form":  get_team_form(f["away_id"]),
             "h2h":        get_h2h(f["home_id"], f["away_id"]),
-            "home_stats": get_team_stats(f["home_id"], league_id),
-            "away_stats": get_team_stats(f["away_id"], league_id),
+            "home_stats": get_team_stats(f["home_id"], f["league_id"]),
+            "away_stats": get_team_stats(f["away_id"], f["league_id"]),
         })
 
     print("🤖 Ανάλυση με Claude...")
