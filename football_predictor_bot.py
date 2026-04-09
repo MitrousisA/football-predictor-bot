@@ -31,9 +31,9 @@ LEAGUE_IDS = {
 }
 
 # ─── API CALLS ───────────────────────────────────────────────────────────────
-
 def get_fixtures_today():
-    today = "2026-04-08"
+    today = 2026-04-08
+    print(f"🔍 Ψάχνω παιχνίδια για: {today}")
     all_fixtures = []
     for league_id, league_name in LEAGUE_IDS.items():
         resp = requests.get(
@@ -41,6 +41,7 @@ def get_fixtures_today():
             headers=HEADERS,
             params={"league": league_id, "date": today, "season": "2025"}
         )
+        print(f"  League {league_name}: status={resp.status_code}, results={len(resp.json().get('response', []))}")
         if resp.status_code != 200:
             continue
         for f in resp.json().get("response", []):
@@ -55,7 +56,6 @@ def get_fixtures_today():
                 "league_id":  league_id,
             })
     return all_fixtures
-
 
 def get_team_form(team_id):
     resp = requests.get(
