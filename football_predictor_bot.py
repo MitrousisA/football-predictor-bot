@@ -46,7 +46,7 @@ ODDS_SPORT_KEYS = {
 
 def get_fixtures_today():
     """Παίρνει όλα τα παιχνίδια της σημερινής ημέρας."""
-    today = "2026-04-05"
+    today = date.today().isoformat()
     print(f"🔍 Ψάχνω παιχνίδια για: {today}")
     all_fixtures = []
 
