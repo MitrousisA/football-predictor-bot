@@ -32,7 +32,7 @@ LEAGUE_IDS = {
 
 # ─── API CALLS ───────────────────────────────────────────────────────────────
 def get_fixtures_today():
-    today = 2026-04-08
+    today = "2026-04-08"
     print(f"🔍 Ψάχνω παιχνίδια για: {today}")
     all_fixtures = []
     for league_id, league_name in LEAGUE_IDS.items():
