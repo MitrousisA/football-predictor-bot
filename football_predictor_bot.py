@@ -290,7 +290,7 @@ ULTRA-SAFE FILTERS (Part 2) - Βαθμολόγησε 0 ή 1:
 """
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-5",
         max_tokens=2500,
         messages=[{"role": "user", "content": prompt}]
     )
