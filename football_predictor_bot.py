@@ -57,7 +57,7 @@ ODDS_SPORT_KEYS = {
 # ─── FOOTBALL-DATA.ORG ───────────────────────────────────────────────────────
 
 def get_fixtures_today():
-    today = date.today().isoformat()
+    today = "2026-04-15"
     print(f"🔍 Ψάχνω παιχνίδια για: {today}")
     all_fixtures = []
     for code, name in COMPETITIONS.items():
