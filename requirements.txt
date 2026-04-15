@@ -1,3 +1,4 @@
-# requirements.txt
 anthropic
 requests
+aiohttp
+understat
