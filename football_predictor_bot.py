@@ -1,21 +1,21 @@
 """
-⚽ Football Prediction Bot - v6
-================================
+⚽ Football Prediction Bot - v7 (Expert Analyst System)
+=========================================================
 Δεδομένα:
   - football-data.org  → fixtures, form, H2H, standings
-  - the-odds-api.com   → αποδόσεις
-  - understat.com      → xG, xGA data (δωρεάν)
+  - the-odds-api.com   → αποδόσεις 1X2 + Over/Under
 
-Σύστημα ανάλυσης: 8-point GG & Over 2.5 filter
+Σύστημα: Έμπειρος αναλυτής 30 χρόνων
+  - Φίλτρο Α: 1X2 (4/4 κριτήρια)
+  - Φίλτρο Β: GG & Over 2.5 (4/5 κριτήρια)
+  - Ultra-Safe: Και τα δύο συμφωνούν
+  - Μέγιστο 3 BEST BETS ημερησίως
 """
 
 import os
-import asyncio
-import aiohttp
 import requests
 import anthropic
 from datetime import date, timedelta
-from understat import Understat
 
 # ─── KEYS ────────────────────────────────────────────────────────────────────
 
@@ -37,14 +37,6 @@ COMPETITIONS = {
     "CL":  "Champions League",
 }
 
-UNDERSTAT_LEAGUES = {
-    "PL":  "EPL",
-    "PD":  "La_Liga",
-    "SA":  "Serie_A",
-    "BL1": "Bundesliga",
-    "FL1": "Ligue_1",
-}
-
 ODDS_SPORT_KEYS = {
     "PL":  "soccer_england_premier_league",
     "PD":  "soccer_spain_la_liga",
@@ -57,7 +49,7 @@ ODDS_SPORT_KEYS = {
 # ─── FOOTBALL-DATA.ORG ───────────────────────────────────────────────────────
 
 def get_fixtures_today():
-    today = date.today().isoformat()
+    today = "2026-04-21"
     print(f"🔍 Ψάχνω παιχνίδια για: {today}")
     all_fixtures = []
     for code, name in COMPETITIONS.items():
@@ -79,36 +71,103 @@ def get_fixtures_today():
                 "away_id":     m["awayTeam"]["id"],
                 "time":        m["utcDate"][11:16],
                 "competition": code,
+                "matchday":    m.get("matchday", "N/A"),
+                "stage":       m.get("stage", ""),
             })
     return all_fixtures
 
 
-def get_team_form(team_id):
+def get_team_last_matches(team_id, limit=6):
+    """Παίρνει τα τελευταία ματς μιας ομάδας με λεπτομέρειες."""
     today = date.today().isoformat()
     date_from = (date.today() - timedelta(days=120)).isoformat()
     resp = requests.get(
         f"{FOOTBALL_BASE}/teams/{team_id}/matches",
         headers=FOOTBALL_HEADERS,
-        params={"dateFrom": date_from, "dateTo": today, "limit": 6, "status": "FINISHED"},
+        params={"dateFrom": date_from, "dateTo": today, "limit": limit, "status": "FINISHED"},
         timeout=10
     )
     if resp.status_code != 200:
-        return "N/A"
+        return []
+    return resp.json().get("matches", [])[-limit:]
+
+
+def analyze_team_form(matches, team_id):
+    """Αναλύει το form μιας ομάδας από τα τελευταία ματς."""
+    if not matches:
+        return {
+            "form": "N/A",
+            "scored_rate": 0,
+            "win_streak": 0,
+            "loss_streak": 0,
+            "goals_per_game": 0,
+            "conceded_per_game": 0,
+            "over25_rate": 0,
+        }
+
     results = []
-    for m in resp.json().get("matches", [])[-6:]:
+    scored_count = 0
+    goals_for = 0
+    goals_against = 0
+    over25_count = 0
+
+    for m in matches:
         score = m.get("score", {}).get("fullTime", {})
         hg, ag = score.get("home"), score.get("away")
         if hg is None or ag is None:
             continue
+
         is_home = m["homeTeam"]["id"] == team_id
-        if is_home:
-            results.append("W" if hg > ag else ("D" if hg == ag else "L"))
+        gf = hg if is_home else ag
+        ga = ag if is_home else hg
+
+        goals_for += gf
+        goals_against += ga
+        if gf > 0:
+            scored_count += 1
+        if (hg + ag) > 2:
+            over25_count += 1
+
+        if gf > ga:
+            results.append("W")
+        elif gf == ga:
+            results.append("D")
         else:
-            results.append("W" if ag > hg else ("D" if ag == hg else "L"))
-    return "".join(results) if results else "N/A"
+            results.append("L")
+
+    n = len(results)
+    if n == 0:
+        return {"form": "N/A", "scored_rate": 0, "win_streak": 0,
+                "loss_streak": 0, "goals_per_game": 0, "conceded_per_game": 0, "over25_rate": 0}
+
+    # Υπολογισμός streak
+    win_streak = 0
+    for r in reversed(results):
+        if r == "W":
+            win_streak += 1
+        else:
+            break
+
+    loss_streak = 0
+    for r in reversed(results):
+        if r == "L":
+            loss_streak += 1
+        else:
+            break
+
+    return {
+        "form":              "".join(results),
+        "scored_rate":       round(scored_count / n, 2),
+        "win_streak":        win_streak,
+        "loss_streak":       loss_streak,
+        "goals_per_game":    round(goals_for / n, 2),
+        "conceded_per_game": round(goals_against / n, 2),
+        "over25_rate":       round(over25_count / n, 2),
+    }
 
 
 def get_h2h(match_id):
+    """Παίρνει H2H με πλήρη ανάλυση."""
     resp = requests.get(
         f"{FOOTBALL_BASE}/matches/{match_id}/head2head",
         headers=FOOTBALL_HEADERS,
@@ -116,10 +175,22 @@ def get_h2h(match_id):
         timeout=10
     )
     if resp.status_code != 200:
-        return "N/A", 0
+        return {"text": "N/A", "over25_count": 0, "home_wins": 0, "away_wins": 0, "draws": 0, "total": 0}
+
     matches = resp.json().get("matches", [])
+    if not matches:
+        return {"text": "N/A", "over25_count": 0, "home_wins": 0, "away_wins": 0, "draws": 0, "total": 0}
+
     results = []
-    gg_over25_count = 0
+    over25_count = 0
+    gg_count = 0
+    home_wins = 0
+    away_wins = 0
+    draws = 0
+
+    # Παίρνουμε τα ονόματα από το πρώτο ματς για reference
+    ref_home = matches[0]["homeTeam"]["name"] if matches else ""
+
     for m in matches:
         score = m.get("score", {}).get("fullTime", {})
         hg, ag = score.get("home"), score.get("away")
@@ -127,9 +198,26 @@ def get_h2h(match_id):
         an = m["awayTeam"]["name"]
         if hg is not None and ag is not None:
             results.append(f"{hn} {hg}-{ag} {an}")
-            if hg > 0 and ag > 0 and (hg + ag) > 2:
-                gg_over25_count += 1
-    return " | ".join(results) if results else "N/A", gg_over25_count
+            if (hg + ag) > 2:
+                over25_count += 1
+            if hg > 0 and ag > 0:
+                gg_count += 1
+            if hg > ag:
+                home_wins += 1
+            elif hg < ag:
+                away_wins += 1
+            else:
+                draws += 1
+
+    return {
+        "text":         " | ".join(results) if results else "N/A",
+        "over25_count": over25_count,
+        "gg_count":     gg_count,
+        "home_wins":    home_wins,
+        "away_wins":    away_wins,
+        "draws":        draws,
+        "total":        len(results),
+    }
 
 
 def get_standings(competition_code):
@@ -144,91 +232,70 @@ def get_standings(competition_code):
     for group in resp.json().get("standings", []):
         if group.get("type") == "TOTAL":
             for team in group.get("table", []):
+                played = team.get("playedGames", 1) or 1
                 standings[team["team"]["id"]] = {
-                    "position": team["position"],
-                    "points":   team["points"],
-                    "gf":       team["goalsFor"],
-                    "ga":       team["goalsAgainst"],
+                    "position":        team["position"],
+                    "points":          team["points"],
+                    "played":          played,
+                    "won":             team["won"],
+                    "gf":              team["goalsFor"],
+                    "ga":              team["goalsAgainst"],
+                    "goals_per_game":  round(team["goalsFor"] / played, 2),
+                    "conceded_per_game": round(team["goalsAgainst"] / played, 2),
                 }
     return standings
 
 
-# ─── UNDERSTAT (xG DATA) ─────────────────────────────────────────────────────
-
-async def get_xg_data_async(home_team_name, away_team_name, league_code):
-    understat_league = UNDERSTAT_LEAGUES.get(league_code)
-    if not understat_league:
-        return {}, {}
-
-    async with aiohttp.ClientSession() as session:
-        understat = Understat(session)
-        try:
-            teams_data = await understat.get_teams(understat_league, 2025)
-            home_xg, away_xg = {}, {}
-
-            for team in teams_data:
-                team_name = team.get("title", "")
-                history = team.get("history", [])[-5:]
-                if not history:
-                    continue
-
-                xg_vals  = [float(h.get("xG", 0)) for h in history]
-                xga_vals = [float(h.get("xGA", 0)) for h in history]
-                stats = {
-                    "xG_avg":  round(sum(xg_vals) / len(xg_vals), 2),
-                    "xGA_avg": round(sum(xga_vals) / len(xga_vals), 2),
-                }
-
-                home_words = home_team_name.split()[:2]
-                away_words = away_team_name.split()[:2]
-
-                if any(w.lower() in team_name.lower() for w in home_words):
-                    home_xg = stats
-                if any(w.lower() in team_name.lower() for w in away_words):
-                    away_xg = stats
-
-            return home_xg, away_xg
-
-        except Exception as e:
-            print(f"  ⚠️ Understat error: {e}")
-            return {}, {}
-
-
-def get_xg_data(home_team_name, away_team_name, league_code):
-    return asyncio.run(get_xg_data_async(home_team_name, away_team_name, league_code))
-
-
-# ─── THE ODDS API ─────────────────────────────────────────────────────────────
-
-def get_odds(competition_code, home_team, away_team):
+def get_odds_full(competition_code, home_team, away_team):
+    """Παίρνει αποδόσεις 1X2 και Over/Under 2.5."""
     sport_key = ODDS_SPORT_KEYS.get(competition_code)
     if not sport_key:
-        return "N/A"
+        return {"h2h": "N/A", "over25": "N/A"}
+
+    result = {"h2h": "N/A", "over25": "N/A"}
+
+    # 1X2
     resp = requests.get(
         f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
-        params={
-            "apiKey":     ODDS_API_KEY,
-            "regions":    "eu",
-            "markets":    "h2h",
-            "oddsFormat": "decimal",
-        },
+        params={"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h", "oddsFormat": "decimal"},
         timeout=10
     )
-    if resp.status_code != 200:
-        return "N/A"
-    for game in resp.json():
-        gh = game.get("home_team", "").lower()
-        ga = game.get("away_team", "").lower()
-        if home_team.lower()[:5] in gh or away_team.lower()[:5] in ga:
-            bookmakers = game.get("bookmakers", [])
-            if bookmakers:
-                outcomes = bookmakers[0].get("markets", [{}])[0].get("outcomes", [])
-                odds_dict = {o["name"]: o["price"] for o in outcomes}
-                h = odds_dict.get(game["home_team"], "N/A")
-                d = odds_dict.get("Draw", "N/A")
-                a = odds_dict.get(game["away_team"], "N/A")
-                return f"1:{h} X:{d} 2:{a}"
-    return "N/A"
+    if resp.status_code == 200:
+        for game in resp.json():
+            gh = game.get("home_team", "").lower()
+            ga = game.get("away_team", "").lower()
+            if home_team.lower()[:5] in gh or away_team.lower()[:5] in ga:
+                bookmakers = game.get("bookmakers", [])
+                if bookmakers:
+                    outcomes = bookmakers[0].get("markets", [{}])[0].get("outcomes", [])
+                    odds_dict = {o["name"]: o["price"] for o in outcomes}
+                    h = odds_dict.get(game["home_team"], "N/A")
+                    d = odds_dict.get("Draw", "N/A")
+                    a = odds_dict.get(game["away_team"], "N/A")
+                    result["h2h"] = f"1:{h} X:{d} 2:{a}"
+                break
+
+    # Over/Under 2.5
+    resp2 = requests.get(
+        f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
+        params={"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "totals", "oddsFormat": "decimal"},
+        timeout=10
+    )
+    if resp2.status_code == 200:
+        for game in resp2.json():
+            gh = game.get("home_team", "").lower()
+            ga = game.get("away_team", "").lower()
+            if home_team.lower()[:5] in gh or away_team.lower()[:5] in ga:
+                bookmakers = game.get("bookmakers", [])
+                if bookmakers:
+                    for market in bookmakers[0].get("markets", []):
+                        if market.get("key") == "totals":
+                            for outcome in market.get("outcomes", []):
+                                if outcome.get("name") == "Over" and str(outcome.get("point", "")) == "2.5":
+                                    result["over25"] = outcome["price"]
+                break
+
+    return result
 
 
 # ─── CLAUDE ANALYSIS ──────────────────────────────────────────────────────────
@@ -238,52 +305,84 @@ def analyze_with_claude(match_data: list) -> str:
 
     matches_text = ""
     for i, m in enumerate(match_data, 1):
-        hs  = m.get("home_standing", {})
-        as_ = m.get("away_standing", {})
-        hxg = m.get("home_xg", {})
-        axg = m.get("away_xg", {})
+        hs   = m.get("home_standing", {})
+        as_  = m.get("away_standing", {})
+        hf   = m.get("home_form", {})
+        af   = m.get("away_form", {})
+        h2h  = m.get("h2h", {})
+        odds = m.get("odds", {})
 
         matches_text += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Αγώνας {i}: {m['home']} vs {m['away']}
-  Πρωτάθλημα       : {m['league']}
-  Ώρα (UTC)        : {m['time']}
-  Form (home)      : {m.get('home_form', 'N/A')}
-  Form (away)      : {m.get('away_form', 'N/A')}
-  H2H (τελ. 5)    : {m.get('h2h', 'N/A')}
-  H2H GG+Over2.5  : {m.get('h2h_gg_over25', 0)}/5 ματς
-  Βαθμολογία home : {hs.get('position','?')}ος | {hs.get('gf','?')} γκολ υπέρ | {hs.get('ga','?')} γκολ κατά
-  Βαθμολογία away : {as_.get('position','?')}ος | {as_.get('gf','?')} γκολ υπέρ | {as_.get('ga','?')} γκολ κατά
-  xG home (avg5)  : {hxg.get('xG_avg', 'N/A')} | xGA: {hxg.get('xGA_avg', 'N/A')}
-  xG away (avg5)  : {axg.get('xG_avg', 'N/A')} | xGA: {axg.get('xGA_avg', 'N/A')}
-  Αποδόσεις       : {m.get('odds', 'N/A')}
+  Πρωτάθλημα        : {m['league']}
+  Ώρα (UTC)         : {m['time']}
+  Stage             : {m.get('stage', 'N/A')}
+
+  ΒΑΘΜΟΛΟΓΙΑ:
+  Home: {hs.get('position','?')}ος | {hs.get('points','?')} βαθμοί | {hs.get('gf','?')} γκολ υπέρ | {hs.get('ga','?')} κατά | {hs.get('goals_per_game','?')} γκολ/αγώνα | {hs.get('conceded_per_game','?')} δέχεται/αγώνα
+  Away: {as_.get('position','?')}ος | {as_.get('points','?')} βαθμοί | {as_.get('gf','?')} γκολ υπέρ | {as_.get('ga','?')} κατά | {as_.get('goals_per_game','?')} γκολ/αγώνα | {as_.get('conceded_per_game','?')} δέχεται/αγώνα
+  Διαφορά βαθμών    : {abs(hs.get('points', 0) - as_.get('points', 0))}
+
+  FORM (τελ. 6):
+  Home: {hf.get('form','N/A')} | Σκοράρει: {hf.get('scored_rate','?')*100:.0f}% | Γκολ/αγώνα: {hf.get('goals_per_game','?')} | Δέχεται/αγώνα: {hf.get('conceded_per_game','?')} | Win streak: {hf.get('win_streak',0)} | Loss streak: {hf.get('loss_streak',0)}
+  Away: {af.get('form','N/A')} | Σκοράρει: {af.get('scored_rate','?')*100:.0f}% | Γκολ/αγώνα: {af.get('goals_per_game','?')} | Δέχεται/αγώνα: {af.get('conceded_per_game','?')} | Win streak: {af.get('win_streak',0)} | Loss streak: {af.get('loss_streak',0)}
+
+  H2H (τελ. 5):
+  Αποτελέσματα      : {h2h.get('text','N/A')}
+  Over 2.5          : {h2h.get('over25_count',0)}/{h2h.get('total',0)} ματς
+  GG (και οι 2)     : {h2h.get('gg_count',0)}/{h2h.get('total',0)} ματς
+  Νίκες home team   : {h2h.get('home_wins',0)}/{h2h.get('total',0)}
+  Νίκες away team   : {h2h.get('away_wins',0)}/{h2h.get('total',0)}
+  Ισοπαλίες         : {h2h.get('draws',0)}/{h2h.get('total',0)}
+
+  ΑΠΟΔΟΣΕΙΣ:
+  1X2               : {odds.get('h2h','N/A')}
+  Over 2.5          : {odds.get('over25','N/A')}
 """
 
-    prompt = f"""Είσαι έμπειρος αναλυτής αθλητικών δεδομένων με εξειδίκευση στα προγνωστικά μοντέλα GG & Over 2.5.
+    prompt = f"""Είσαι έμπειρος αναλυτής ποδοσφαίρου με 30+ χρόνια εμπειρία στην ανάλυση και πρόβλεψη αγώνων. Έχεις αναπτύξει ένα αυστηρό σύστημα που βασίζεται σε αποδεδειγμένα στατιστικά σήματα.
 
-Για κάθε αγώνα εφάρμοσε το παρακάτω αυστηρό φίλτρο 8 σημείων:
+Αναλύεις κάθε αγώνα με δύο ξεχωριστά φίλτρα:
 
-CORE CRITERIA (Part 1) - Βαθμολόγησε 0 ή 1 για κάθε κριτήριο:
-1. xG > 1.40 ΚΑΙ xGA > 1.20 και για τις 2 ομάδες
-2. Γκολ κατά/αγώνα > 1.2 (από βαθμολογία) και για τις 2 ομάδες
-3. Σκοράρει εκτός έδρας ο φιλοξενούμενος: ≥ 80% ματς (από form)
-4. H2H: ≥ 2/5 ματς GG & Over 2.5
-5. Αποδόσεις Over 2.5 < 1.90 (αγορά το υποστηρίζει)
+═══════════════════════════════════
+ΦΙΛΤΡΟ Α — ΑΠΟΤΕΛΕΣΜΑ (1X2)
+Απαιτούνται 4/4:
+1. Διαφορά βαθμών > 10 Ή Form διαφορά ≥ 4W vs ≤ 1W στα τελ. 5
+2. H2H: ≥ 3/5 νίκες για την ίδια ομάδα
+3. Απόδοση 1.25-1.65 (value zone)
+4. Εκτός ομάδα σε loss streak ≥ 3 Ή εντός σε win streak ≥ 3
+═══════════════════════════════════
 
-ULTRA-SAFE FILTERS (Part 2) - Βαθμολόγησε 0 ή 1:
-6. xG home avg > 1.5
-7. xGA away avg > 1.3
-8. H2H GG+Over2.5 ≥ 3/5
+═══════════════════════════════════
+ΦΙΛΤΡΟ Β — GG & OVER 2.5
+Απαιτούνται 4/5:
+1. Γκολ υπέρ/αγώνα > 1.4 ΚΑΙ για τις 2 ομάδες
+2. Γκολ κατά/αγώνα > 1.2 ΚΑΙ για τις 2 ομάδες
+3. H2H: ≥ 3/5 ματς Over 2.5
+4. Και οι 2 σκόραραν σε ≥ 80% τελ. ματς
+5. Απόδοση Over 2.5 < 1.85
+═══════════════════════════════════
 
-Παρουσίασε αποτελέσματα σε πίνακα:
-| Αγώνας | Score (0-8) | Ultra-Safe | Σύσταση | Αιτιολόγηση |
+ΚΑΝΟΝΕΣ ΕΜΠΕΙΡΙΑΣ:
+❌ Αποφεύγω: Derby ματς (απρόβλεπτα)
+❌ Αποφεύγω: Αποδόσεις < 1.25 (μηδενικό value)
+❌ Αποφεύγω: Ματς χωρίς κίνητρο (ήδη πρωταθλητές/αποβλημένοι)
+❌ Αποφεύγω: Stage = GROUP_STAGE τελευταία αγωνιστική (τακτικές ροτάσιες)
+✅ Προτιμώ: Αγώνες με υψηλό κίνητρο (τίτλος, CL θέση, υποβιβασμός)
+✅ Μέγιστο 3 BEST BETS — αν υπάρχουν περισσότερα επιλέγω τα 3 καλύτερα
 
-ΚΑΝΟΝΕΣ:
-- ⭐ BEST BET: Score ≥ 6/8
-- 🔒 ULTRA-SAFE: Score ≥ 6/8 + και τα 3 Part 2 φίλτρα ΝΑΙ
-- Να είσαι ΑΥΣΤΗΡΑ ΣΥΝΤΗΡΗΤΙΚΟΣ
-- Αν κανένας αγώνας δεν πληροί τα κριτήρια, πες το ξεκάθαρα
+ULTRA-SAFE: Όταν ο ΙΔΙΟΣ αγώνας πληροί ΚΑΙ Φίλτρο Α ΚΑΙ Φίλτρο Β
 
-Στο τέλος: σύνοψη BEST BETS και 💡 TOP PICK μόνο αν υπάρχει Ultra-Safe.
+ΜΟΡΦΗ ΕΞΟΔΟΥ (για Telegram):
+Για κάθε BEST BET:
+⭐ [ΤΥΠΟΣ] | [Αγώνας] | [Πρόταση] | Score: X/4 ή X/5
+📊 [Σύντομη αιτιολόγηση 2-3 γραμμές με τα κρίσιμα στατιστικά]
+
+Στο τέλος:
+🏆 ΣΥΝΟΨΗ BEST BETS
+💡 TOP PICK (μόνο αν υπάρχει Ultra-Safe)
+⚠️ Αν κανένας δεν πληροί τα κριτήρια: "Σήμερα δεν υπάρχει αξιόπιστη πρόταση. Μην παίξεις."
 
 Σημερινοί αγώνες:
 {matches_text}
@@ -291,7 +390,7 @@ ULTRA-SAFE FILTERS (Part 2) - Βαθμολόγησε 0 ή 1:
 
     message = client.messages.create(
         model="claude-sonnet-4-5",
-        max_tokens=2500,
+        max_tokens=3000,
         messages=[{"role": "user", "content": prompt}]
     )
     return message.content[0].text
@@ -329,21 +428,19 @@ def main():
     enriched = []
     for f in fixtures:
         print(f"  📊 {f['home']} vs {f['away']}...")
-        standings  = standings_cache.get(f["competition"], {})
-        h2h_text, h2h_gg = get_h2h(f["match_id"])
-        home_xg, away_xg  = get_xg_data(f["home"], f["away"], f["competition"])
+        standings = standings_cache.get(f["competition"], {})
+
+        home_matches = get_team_last_matches(f["home_id"], limit=6)
+        away_matches = get_team_last_matches(f["away_id"], limit=6)
 
         enriched.append({
             **f,
-            "home_form":     get_team_form(f["home_id"]),
-            "away_form":     get_team_form(f["away_id"]),
-            "h2h":           h2h_text,
-            "h2h_gg_over25": h2h_gg,
+            "home_form":     analyze_team_form(home_matches, f["home_id"]),
+            "away_form":     analyze_team_form(away_matches, f["away_id"]),
+            "h2h":           get_h2h(f["match_id"]),
             "home_standing": standings.get(f["home_id"], {}),
             "away_standing": standings.get(f["away_id"], {}),
-            "home_xg":       home_xg,
-            "away_xg":       away_xg,
-            "odds":          get_odds(f["competition"], f["home"], f["away"]),
+            "odds":          get_odds_full(f["competition"], f["home"], f["away"]),
         })
 
     print("🤖 Ανάλυση με Claude...")
