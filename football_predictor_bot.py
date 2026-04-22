@@ -1,15 +1,15 @@
 """
-⚽ Football Prediction Bot - v9
-================================
+⚽ Football Prediction Bot - v10
+==================================
 Δεδομένα:
-  - football-data.org  → fixtures, form, H2H, standings
+  - football-data.org  → fixtures, form (από competition matches), H2H, standings
   - the-odds-api.com   → αποδόσεις 1X2 + Over/Under
 
 Σύστημα: Έμπειρος αναλυτής 30+ χρόνων
   - BEST BET μόνο με εμπιστοσύνη > 75%
   - Μέγιστο 3 BEST BETS ημερησίως
   - Ultra-Safe για εμπιστοσύνη > 85%
-  - Παράλειψη ομάδων εκτός βαθμολογίας
+  - Form από competition/matches (δωρεάν endpoint)
 """
 
 import os
@@ -46,58 +46,61 @@ ODDS_SPORT_KEYS = {
     "CL":  "soccer_uefa_champs_league",
 }
 
-# ─── FOOTBALL-DATA.ORG ───────────────────────────────────────────────────────
+# ─── CACHE: Τελευταία ματς ανά πρωτάθλημα ────────────────────────────────────
 
-def get_fixtures_today():
+_recent_matches_cache = {}
+
+def get_recent_competition_matches(competition_code, limit=60):
+    """
+    Παίρνει τα τελευταία ολοκληρωμένα ματς ενός πρωταθλήματος.
+    Αποθηκεύει σε cache για να μην κάνει πολλαπλά requests.
+    """
+    if competition_code in _recent_matches_cache:
+        return _recent_matches_cache[competition_code]
+
     today = date.today().isoformat()
-    print(f"🔍 Ψάχνω παιχνίδια για: {today}")
-    all_fixtures = []
-    for code, name in COMPETITIONS.items():
-        try:
-            resp = requests.get(
-                f"{FOOTBALL_BASE}/competitions/{code}/matches",
-                headers=FOOTBALL_HEADERS,
-                params={"dateFrom": today, "dateTo": today},
-                timeout=(5, 10)
-            )
-            matches = resp.json().get("matches", []) if resp.status_code == 200 else []
-        except:
-            matches = []
-        print(f"  {name}: {len(matches)} παιχνίδια")
-        for m in matches:
-            all_fixtures.append({
-                "league":      name,
-                "match_id":    m["id"],
-                "home":        m["homeTeam"]["name"],
-                "away":        m["awayTeam"]["name"],
-                "home_id":     m["homeTeam"]["id"],
-                "away_id":     m["awayTeam"]["id"],
-                "time":        m["utcDate"][11:16],
-                "competition": code,
-                "stage":       m.get("stage", ""),
-            })
-    return all_fixtures
+    date_from = (date.today() - timedelta(days=90)).isoformat()
 
-
-def get_team_last_matches(team_id, limit=6):
-    today = date.today().isoformat()
-    date_from = (date.today() - timedelta(days=120)).isoformat()
     try:
         resp = requests.get(
-            f"{FOOTBALL_BASE}/teams/{team_id}/matches",
+            f"{FOOTBALL_BASE}/competitions/{competition_code}/matches",
             headers=FOOTBALL_HEADERS,
-            params={"dateFrom": date_from, "dateTo": today, "limit": limit, "status": "FINISHED"},
-            timeout=(5, 10)
+            params={
+                "dateFrom": date_from,
+                "dateTo":   today,
+                "status":   "FINISHED",
+                "limit":    limit,
+            },
+            timeout=(5, 15)
         )
         if resp.status_code != 200:
+            _recent_matches_cache[competition_code] = []
             return []
-        return resp.json().get("matches", [])[-limit:]
+        matches = resp.json().get("matches", [])
+        _recent_matches_cache[competition_code] = matches
+        return matches
     except:
+        _recent_matches_cache[competition_code] = []
         return []
 
 
-def analyze_team_form(matches, team_id):
-    if not matches:
+def get_team_form_from_competition(team_id, competition_code, limit=6):
+    """
+    Παίρνει το form μιας ομάδας από τα ματς του πρωταθλήματος.
+    Χρησιμοποιεί το δωρεάν endpoint competitions/{code}/matches.
+    """
+    all_matches = get_recent_competition_matches(competition_code)
+
+    # Φιλτράρουμε ματς που συμμετέχει η ομάδα
+    team_matches = []
+    for m in all_matches:
+        if m["homeTeam"]["id"] == team_id or m["awayTeam"]["id"] == team_id:
+            team_matches.append(m)
+
+    # Παίρνουμε τα τελευταία limit ματς
+    team_matches = team_matches[-limit:]
+
+    if not team_matches:
         return {
             "form": "N/A", "scored_rate": 0, "win_streak": 0,
             "loss_streak": 0, "goals_per_game": 0, "conceded_per_game": 0,
@@ -108,7 +111,7 @@ def analyze_team_form(matches, team_id):
     goals_for = 0
     goals_against = 0
 
-    for m in matches:
+    for m in team_matches:
         score = m.get("score", {}).get("fullTime", {})
         hg, ag = score.get("home"), score.get("away")
         if hg is None or ag is None:
@@ -149,13 +152,46 @@ def analyze_team_form(matches, team_id):
     }
 
 
+# ─── FIXTURES ────────────────────────────────────────────────────────────────
+
+def get_fixtures_today():
+    today = date.today().isoformat()
+    print(f"🔍 Ψάχνω παιχνίδια για: {today}")
+    all_fixtures = []
+    for code, name in COMPETITIONS.items():
+        try:
+            resp = requests.get(
+                f"{FOOTBALL_BASE}/competitions/{code}/matches",
+                headers=FOOTBALL_HEADERS,
+                params={"dateFrom": today, "dateTo": today},
+                timeout=(5, 15)
+            )
+            matches = resp.json().get("matches", []) if resp.status_code == 200 else []
+        except:
+            matches = []
+        print(f"  {name}: {len(matches)} παιχνίδια")
+        for m in matches:
+            all_fixtures.append({
+                "league":      name,
+                "match_id":    m["id"],
+                "home":        m["homeTeam"]["name"],
+                "away":        m["awayTeam"]["name"],
+                "home_id":     m["homeTeam"]["id"],
+                "away_id":     m["awayTeam"]["id"],
+                "time":        m["utcDate"][11:16],
+                "competition": code,
+                "stage":       m.get("stage", ""),
+            })
+    return all_fixtures
+
+
 def get_h2h(match_id):
     try:
         resp = requests.get(
             f"{FOOTBALL_BASE}/matches/{match_id}/head2head",
             headers=FOOTBALL_HEADERS,
             params={"limit": 5},
-            timeout=(5, 10)
+            timeout=(5, 15)
         )
         if resp.status_code != 200:
             return {"text": "N/A", "over25_count": 0, "gg_count": 0,
@@ -199,7 +235,7 @@ def get_standings(competition_code):
         resp = requests.get(
             f"{FOOTBALL_BASE}/competitions/{competition_code}/standings",
             headers=FOOTBALL_HEADERS,
-            timeout=(5, 10)
+            timeout=(5, 15)
         )
         if resp.status_code != 200:
             return {}
@@ -301,7 +337,7 @@ def analyze_with_claude(match_data: list) -> str:
   Away: {as_.get('position','?')}ος | {as_.get('points','?')} βαθμοί | {as_.get('goals_per_game','?')} γκολ/αγώνα | {as_.get('conceded_per_game','?')} δέχεται/αγώνα
   Διαφορά βαθμών: {abs(hs.get('points', 0) - as_.get('points', 0))}
 
-  FORM (τελ. 6):
+  FORM (τελ. 6 στο πρωτάθλημα):
   Home: {hf.get('form','N/A')} | Σκοράρει: {int(hf.get('scored_rate',0)*100)}% | Γκολ/αγώνα: {hf.get('goals_per_game','?')} | Δέχεται: {hf.get('conceded_per_game','?')} | Win streak: {hf.get('win_streak',0)} | Loss streak: {hf.get('loss_streak',0)}
   Away: {af.get('form','N/A')} | Σκοράρει: {int(af.get('scored_rate',0)*100)}% | Γκολ/αγώνα: {af.get('goals_per_game','?')} | Δέχεται: {af.get('conceded_per_game','?')} | Win streak: {af.get('win_streak',0)} | Loss streak: {af.get('loss_streak',0)}
 
@@ -323,19 +359,19 @@ def analyze_with_claude(match_data: list) -> str:
 ✅ BEST BET μόνο αν εμπιστοσύνη ≥ 75% — αλλιώς ΔΕΝ προτείνεις
 🔒 ULTRA-SAFE μόνο αν εμπιστοσύνη ≥ 85%
 ✅ Μέγιστο 3 BEST BETS — επίλεξε τα 3 με την υψηλότερη εμπιστοσύνη
-❌ ΜΗΝ προτείνεις αν: απόδοση < 1.25 | Derby ματς | Ελλιπή δεδομένα (N/A σε form/H2H)
+❌ ΜΗΝ προτείνεις αν: απόδοση < 1.25 | Derby ματς | form = N/A
 ❌ ΜΗΝ "φουσκώνεις" την εμπιστοσύνη — να είσαι ΑΥΣΤΗΡΑ συντηρητικός
 ✅ Λάβε υπόψη τις αποδόσεις — αν η αγορά διαφωνεί με τα στατιστικά, μείωσε την εμπιστοσύνη
 
-ΑΙΤΙΟΛΟΓΗΣΗ: Για κάθε BEST BET δώσε 2-3 γραμμές με τα συγκεκριμένα στατιστικά που σε πείθουν.
+ΑΙΤΙΟΛΟΓΗΣΗ: Για κάθε BEST BET δώσε 2-3 γραμμές με τα συγκεκριμένα στατιστικά.
 
 ΜΟΡΦΗ ΕΞΟΔΟΥ (Telegram):
 
-Για κάθε αγώνα γράψε σύντομα τι βλέπεις (1 γραμμή), και αν ΔΕΝ είναι BEST BET εξήγησε γιατί.
+Για κάθε αγώνα 1 γραμμή τι βλέπεις και γιατί προτείνεις ή όχι.
 
 Για BEST BET:
 ⭐ [Αγώνας] — [Πρόταση] ([X]%)
-📊 [Αιτιολόγηση με στατιστικά]
+📊 [Αιτιολόγηση]
 
 Για ULTRA-SAFE:
 🔒 ULTRA-SAFE: [Αγώνας] — [Πρόταση] ([X]%)
@@ -343,10 +379,10 @@ def analyze_with_claude(match_data: list) -> str:
 Στο τέλος:
 ━━━━━━━━━━━━━━━━
 🏆 BEST BETS ΗΜΕΡΑΣ:
-[Λίστα μόνο των BEST BETS]
+[Λίστα BEST BETS]
 💡 TOP PICK: [Το καλύτερο]
 
-Αν δεν υπάρχει κανένα ≥75%:
+Αν κανένα ≥75%:
 ⚠️ Σήμερα δεν υπάρχει αξιόπιστη πρόταση. Καλύτερα να μην παίξεις.
 
 Σημερινοί αγώνες:
@@ -386,9 +422,16 @@ def main():
 
     print(f"✅ Βρέθηκαν {len(fixtures)} παιχνίδια. Συλλογή στατιστικών...")
 
+    # Βαθμολογίες ανά πρωτάθλημα
     standings_cache = {}
     for comp in set(f["competition"] for f in fixtures):
         standings_cache[comp] = get_standings(comp)
+
+    # Πρόσφατα ματς ανά πρωτάθλημα (για form) — 1 request ανά πρωτάθλημα
+    print("📥 Φόρτωση πρόσφατων ματς για form...")
+    for comp in set(f["competition"] for f in fixtures):
+        get_recent_competition_matches(comp)
+        print(f"  ✅ {COMPETITIONS[comp]} φορτώθηκε")
 
     enriched = []
     for f in fixtures:
@@ -403,8 +446,8 @@ def main():
         try:
             enriched.append({
                 **f,
-                "home_form":     analyze_team_form(get_team_last_matches(f["home_id"]), f["home_id"]),
-                "away_form":     analyze_team_form(get_team_last_matches(f["away_id"]), f["away_id"]),
+                "home_form":     get_team_form_from_competition(f["home_id"], f["competition"]),
+                "away_form":     get_team_form_from_competition(f["away_id"], f["competition"]),
                 "h2h":           get_h2h(f["match_id"]),
                 "home_standing": standings.get(f["home_id"], {}),
                 "away_standing": standings.get(f["away_id"], {}),
