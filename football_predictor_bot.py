@@ -1,6 +1,6 @@
 """
-⚽ Football Prediction Bot - v8 (Expert Analyst 75%+)
-======================================================
+⚽ Football Prediction Bot - v9
+================================
 Δεδομένα:
   - football-data.org  → fixtures, form, H2H, standings
   - the-odds-api.com   → αποδόσεις 1X2 + Over/Under
@@ -9,6 +9,7 @@
   - BEST BET μόνο με εμπιστοσύνη > 75%
   - Μέγιστο 3 BEST BETS ημερησίως
   - Ultra-Safe για εμπιστοσύνη > 85%
+  - Παράλειψη ομάδων εκτός βαθμολογίας
 """
 
 import os
@@ -48,17 +49,20 @@ ODDS_SPORT_KEYS = {
 # ─── FOOTBALL-DATA.ORG ───────────────────────────────────────────────────────
 
 def get_fixtures_today():
-    today = "2026-04-22"  # date.today().isoformat()
+    today = date.today().isoformat()
     print(f"🔍 Ψάχνω παιχνίδια για: {today}")
     all_fixtures = []
     for code, name in COMPETITIONS.items():
-        resp = requests.get(
-            f"{FOOTBALL_BASE}/competitions/{code}/matches",
-            headers=FOOTBALL_HEADERS,
-            params={"dateFrom": today, "dateTo": today},
-            timeout=10
-        )
-        matches = resp.json().get("matches", []) if resp.status_code == 200 else []
+        try:
+            resp = requests.get(
+                f"{FOOTBALL_BASE}/competitions/{code}/matches",
+                headers=FOOTBALL_HEADERS,
+                params={"dateFrom": today, "dateTo": today},
+                timeout=(5, 10)
+            )
+            matches = resp.json().get("matches", []) if resp.status_code == 200 else []
+        except:
+            matches = []
         print(f"  {name}: {len(matches)} παιχνίδια")
         for m in matches:
             all_fixtures.append({
@@ -83,7 +87,7 @@ def get_team_last_matches(team_id, limit=6):
             f"{FOOTBALL_BASE}/teams/{team_id}/matches",
             headers=FOOTBALL_HEADERS,
             params={"dateFrom": date_from, "dateTo": today, "limit": limit, "status": "FINISHED"},
-            timeout=3
+            timeout=(5, 10)
         )
         if resp.status_code != 200:
             return []
@@ -125,7 +129,6 @@ def analyze_team_form(matches, team_id):
             "loss_streak": 0, "goals_per_game": 0, "conceded_per_game": 0,
         }
 
-    win_streak = sum(1 for _ in iter(lambda: results[::-1], []) if False)
     win_streak = 0
     for r in reversed(results):
         if r == "W": win_streak += 1
@@ -147,13 +150,17 @@ def analyze_team_form(matches, team_id):
 
 
 def get_h2h(match_id):
-    resp = requests.get(
-        f"{FOOTBALL_BASE}/matches/{match_id}/head2head",
-        headers=FOOTBALL_HEADERS,
-        params={"limit": 5},
-        timeout=3
-    )
-    if resp.status_code != 200:
+    try:
+        resp = requests.get(
+            f"{FOOTBALL_BASE}/matches/{match_id}/head2head",
+            headers=FOOTBALL_HEADERS,
+            params={"limit": 5},
+            timeout=(5, 10)
+        )
+        if resp.status_code != 200:
+            return {"text": "N/A", "over25_count": 0, "gg_count": 0,
+                    "home_wins": 0, "away_wins": 0, "draws": 0, "total": 0}
+    except:
         return {"text": "N/A", "over25_count": 0, "gg_count": 0,
                 "home_wins": 0, "away_wins": 0, "draws": 0, "total": 0}
 
@@ -188,13 +195,17 @@ def get_h2h(match_id):
 
 
 def get_standings(competition_code):
-    resp = requests.get(
-        f"{FOOTBALL_BASE}/competitions/{competition_code}/standings",
-        headers=FOOTBALL_HEADERS,
-        timeout=10
-    )
-    if resp.status_code != 200:
+    try:
+        resp = requests.get(
+            f"{FOOTBALL_BASE}/competitions/{competition_code}/standings",
+            headers=FOOTBALL_HEADERS,
+            timeout=(5, 10)
+        )
+        if resp.status_code != 200:
+            return {}
+    except:
         return {}
+
     standings = {}
     for group in resp.json().get("standings", []):
         if group.get("type") == "TOTAL":
@@ -218,46 +229,50 @@ def get_odds_full(competition_code, home_team, away_team):
 
     result = {"h2h": "N/A", "over25": "N/A"}
 
-    # 1X2
-    resp = requests.get(
-        f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
-        params={"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h", "oddsFormat": "decimal"},
-        timeout=10
-    )
-    if resp.status_code == 200:
-        for game in resp.json():
-            gh = game.get("home_team", "").lower()
-            ga = game.get("away_team", "").lower()
-            if home_team.lower()[:5] in gh or away_team.lower()[:5] in ga:
-                bookmakers = game.get("bookmakers", [])
-                if bookmakers:
-                    outcomes = bookmakers[0].get("markets", [{}])[0].get("outcomes", [])
-                    odds_dict = {o["name"]: o["price"] for o in outcomes}
-                    h = odds_dict.get(game["home_team"], "N/A")
-                    d = odds_dict.get("Draw", "N/A")
-                    a = odds_dict.get(game["away_team"], "N/A")
-                    result["h2h"] = f"1:{h} X:{d} 2:{a}"
-                break
+    try:
+        resp = requests.get(
+            f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
+            params={"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h", "oddsFormat": "decimal"},
+            timeout=(5, 10)
+        )
+        if resp.status_code == 200:
+            for game in resp.json():
+                gh = game.get("home_team", "").lower()
+                ga = game.get("away_team", "").lower()
+                if home_team.lower()[:5] in gh or away_team.lower()[:5] in ga:
+                    bookmakers = game.get("bookmakers", [])
+                    if bookmakers:
+                        outcomes = bookmakers[0].get("markets", [{}])[0].get("outcomes", [])
+                        odds_dict = {o["name"]: o["price"] for o in outcomes}
+                        h = odds_dict.get(game["home_team"], "N/A")
+                        d = odds_dict.get("Draw", "N/A")
+                        a = odds_dict.get(game["away_team"], "N/A")
+                        result["h2h"] = f"1:{h} X:{d} 2:{a}"
+                    break
+    except:
+        pass
 
-    # Over/Under 2.5
-    resp2 = requests.get(
-        f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
-        params={"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "totals", "oddsFormat": "decimal"},
-        timeout=10
-    )
-    if resp2.status_code == 200:
-        for game in resp2.json():
-            gh = game.get("home_team", "").lower()
-            ga = game.get("away_team", "").lower()
-            if home_team.lower()[:5] in gh or away_team.lower()[:5] in ga:
-                bookmakers = game.get("bookmakers", [])
-                if bookmakers:
-                    for market in bookmakers[0].get("markets", []):
-                        if market.get("key") == "totals":
-                            for outcome in market.get("outcomes", []):
-                                if outcome.get("name") == "Over" and str(outcome.get("point", "")) == "2.5":
-                                    result["over25"] = outcome["price"]
-                break
+    try:
+        resp2 = requests.get(
+            f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
+            params={"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "totals", "oddsFormat": "decimal"},
+            timeout=(5, 10)
+        )
+        if resp2.status_code == 200:
+            for game in resp2.json():
+                gh = game.get("home_team", "").lower()
+                ga = game.get("away_team", "").lower()
+                if home_team.lower()[:5] in gh or away_team.lower()[:5] in ga:
+                    bookmakers = game.get("bookmakers", [])
+                    if bookmakers:
+                        for market in bookmakers[0].get("markets", []):
+                            if market.get("key") == "totals":
+                                for outcome in market.get("outcomes", []):
+                                    if outcome.get("name") == "Over" and str(outcome.get("point", "")) == "2.5":
+                                        result["over25"] = outcome["price"]
+                    break
+    except:
+        pass
 
     return result
 
@@ -279,7 +294,7 @@ def analyze_with_claude(match_data: list) -> str:
         matches_text += f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Αγώνας {i}: {m['home']} vs {m['away']}
-  Πρωτάθλημα        : {m['league']} | Ώρα (UTC): {m['time']}
+  Πρωτάθλημα: {m['league']} | Ώρα (UTC): {m['time']}
 
   ΒΑΘΜΟΛΟΓΙΑ:
   Home: {hs.get('position','?')}ος | {hs.get('points','?')} βαθμοί | {hs.get('goals_per_game','?')} γκολ/αγώνα | {hs.get('conceded_per_game','?')} δέχεται/αγώνα
@@ -377,8 +392,14 @@ def main():
 
     enriched = []
     for f in fixtures:
-        print(f"  📊 {f['home']} vs {f['away']}...")
         standings = standings_cache.get(f["competition"], {})
+
+        # Παράλειψη αν η ομάδα δεν υπάρχει στη βαθμολογία
+        if f["home_id"] not in standings or f["away_id"] not in standings:
+            print(f"  ⚠️ Παράλειψη {f['home']} vs {f['away']} - εκτός βαθμολογίας")
+            continue
+
+        print(f"  📊 {f['home']} vs {f['away']}...")
         try:
             enriched.append({
                 **f,
@@ -392,6 +413,11 @@ def main():
         except Exception as e:
             print(f"  ⚠️ Παράλειψη {f['home']} vs {f['away']}: {e}")
 
+    if not enriched:
+        send_telegram("⚽ Δεν βρέθηκαν παιχνίδια με πλήρη δεδομένα σήμερα.")
+        return
+
+    print(f"✅ Αναλύω {len(enriched)} παιχνίδια...")
     print("🤖 Ανάλυση με Claude...")
     today_str = date.today().strftime("%A, %d %B %Y")
     analysis  = analyze_with_claude(enriched)
