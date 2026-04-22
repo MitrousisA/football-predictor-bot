@@ -88,7 +88,7 @@ def get_team_last_matches(team_id, limit=6):
         if resp.status_code != 200:
             return []
         return resp.json().get("matches", [])[-limit:]
-    except Exception:
+    except:
         return []
 
 
