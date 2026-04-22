@@ -154,6 +154,32 @@ def get_standings(competition_code):
         return {}
 
 
+def team_name_match(name1, name2):
+    """Έξυπνο matching ονομάτων ομάδων μεταξύ διαφορετικών APIs."""
+    def clean(n):
+        n = n.lower()
+        for word in ["fc", "cf", "ac", "sc", "rc", "afc", "cd", "if",
+                     "1.", "united", "city", "club", "olympique", "saint", "st"]:
+            n = n.replace(word, " ")
+        n = n.replace("-", " ").replace(".", " ").replace("'", "")
+        return " ".join(n.split())  # normalize spaces
+
+    c1 = clean(name1)
+    c2 = clean(name2)
+
+    if c1 == c2:
+        return True
+    if c1 in c2 or c2 in c1:
+        return True
+    w1 = c1.split()[0] if c1.split() else ""
+    w2 = c2.split()[0] if c2.split() else ""
+    if len(w1) > 3 and w1 == w2:
+        return True
+    if len(c1) > 4 and len(c2) > 4 and c1[:4] == c2[:4]:
+        return True
+    return False
+
+
 def get_odds(competition_code, home_team, away_team):
     sport_key = ODDS_SPORT_KEYS.get(competition_code)
     if not sport_key:
@@ -167,9 +193,9 @@ def get_odds(competition_code, home_team, away_team):
         if resp.status_code != 200:
             return "N/A"
         for game in resp.json():
-            gh = game.get("home_team", "").lower()
-            ga = game.get("away_team", "").lower()
-            if home_team.lower()[:5] in gh or away_team.lower()[:5] in ga:
+            gh = game.get("home_team", "")
+            ga = game.get("away_team", "")
+            if team_name_match(home_team, gh) or team_name_match(away_team, ga):
                 bookmakers = game.get("bookmakers", [])
                 if bookmakers:
                     outcomes = bookmakers[0].get("markets", [{}])[0].get("outcomes", [])
