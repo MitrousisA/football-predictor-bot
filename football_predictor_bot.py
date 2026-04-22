@@ -48,7 +48,7 @@ ODDS_SPORT_KEYS = {
 # ─── FOOTBALL-DATA.ORG ───────────────────────────────────────────────────────
 
 def get_fixtures_today():
-    today = "2026-04-22"
+    today = "2026-04-22"  # date.today().isoformat()
     print(f"🔍 Ψάχνω παιχνίδια για: {today}")
     all_fixtures = []
     for code, name in COMPETITIONS.items():
@@ -78,15 +78,18 @@ def get_fixtures_today():
 def get_team_last_matches(team_id, limit=6):
     today = date.today().isoformat()
     date_from = (date.today() - timedelta(days=120)).isoformat()
-    resp = requests.get(
-        f"{FOOTBALL_BASE}/teams/{team_id}/matches",
-        headers=FOOTBALL_HEADERS,
-        params={"dateFrom": date_from, "dateTo": today, "limit": limit, "status": "FINISHED"},
-        timeout=10
-    )
-    if resp.status_code != 200:
+    try:
+        resp = requests.get(
+            f"{FOOTBALL_BASE}/teams/{team_id}/matches",
+            headers=FOOTBALL_HEADERS,
+            params={"dateFrom": date_from, "dateTo": today, "limit": limit, "status": "FINISHED"},
+            timeout=5
+        )
+        if resp.status_code != 200:
+            return []
+        return resp.json().get("matches", [])[-limit:]
+    except Exception:
         return []
-    return resp.json().get("matches", [])[-limit:]
 
 
 def analyze_team_form(matches, team_id):
@@ -376,15 +379,18 @@ def main():
     for f in fixtures:
         print(f"  📊 {f['home']} vs {f['away']}...")
         standings = standings_cache.get(f["competition"], {})
-        enriched.append({
-            **f,
-            "home_form":     analyze_team_form(get_team_last_matches(f["home_id"]), f["home_id"]),
-            "away_form":     analyze_team_form(get_team_last_matches(f["away_id"]), f["away_id"]),
-            "h2h":           get_h2h(f["match_id"]),
-            "home_standing": standings.get(f["home_id"], {}),
-            "away_standing": standings.get(f["away_id"], {}),
-            "odds":          get_odds_full(f["competition"], f["home"], f["away"]),
-        })
+        try:
+            enriched.append({
+                **f,
+                "home_form":     analyze_team_form(get_team_last_matches(f["home_id"]), f["home_id"]),
+                "away_form":     analyze_team_form(get_team_last_matches(f["away_id"]), f["away_id"]),
+                "h2h":           get_h2h(f["match_id"]),
+                "home_standing": standings.get(f["home_id"], {}),
+                "away_standing": standings.get(f["away_id"], {}),
+                "odds":          get_odds_full(f["competition"], f["home"], f["away"]),
+            })
+        except Exception as e:
+            print(f"  ⚠️ Παράλειψη {f['home']} vs {f['away']}: {e}")
 
     print("🤖 Ανάλυση με Claude...")
     today_str = date.today().strftime("%A, %d %B %Y")
