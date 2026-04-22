@@ -83,7 +83,7 @@ def get_team_last_matches(team_id, limit=6):
             f"{FOOTBALL_BASE}/teams/{team_id}/matches",
             headers=FOOTBALL_HEADERS,
             params={"dateFrom": date_from, "dateTo": today, "limit": limit, "status": "FINISHED"},
-            timeout=5
+            timeout=3
         )
         if resp.status_code != 200:
             return []
@@ -151,7 +151,7 @@ def get_h2h(match_id):
         f"{FOOTBALL_BASE}/matches/{match_id}/head2head",
         headers=FOOTBALL_HEADERS,
         params={"limit": 5},
-        timeout=10
+        timeout=3
     )
     if resp.status_code != 200:
         return {"text": "N/A", "over25_count": 0, "gg_count": 0,
